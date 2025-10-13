@@ -1,0 +1,32 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  log_level: "debug"
+
+webrtc:
+  ice_servers:
+  - urls: ["stun:stun.l.google.com:19302"]
+  - urls: ["stun:stun1.l.google.com:19302"]
+  - urls: ["stun:stun2.l.google.com:19302"]
+  - urls: ["stun:stun3.l.google.com:19302"]
+    # пример для будущего:
+    # - urls:
+    #     - "turn:turn.example.com:3478"
+    #   username: "user"
+    #   credential: "pass"
+
+ice:
+  udp_port_range:
+    min: 10000
+    max: 20000
+  tcp_port_range:
+    min: 20001
+    max: 30000
+  use_tcp: true
+
+rooms:
+  max_participants: 10
+  idle_timeout: "30m"       # время простоя комнаты до удаления
+  cleanup_interval: "5m"    # как часто проверять неактивные комнаты
+
+environment: "development"
