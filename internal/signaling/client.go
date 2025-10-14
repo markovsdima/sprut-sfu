@@ -92,6 +92,7 @@ func (c *Client) handleJoin(req protocol.Request) {
 	log.Printf("🔄 DISTRIBUTING: Adding existing tracks from %d peers to new peer %s", len(existingPeerIDs), params.PeerID)
 
 	// Проходим по всем существующим пирам и добавляем их медиапотоки к новому клиенту
+	addedTracks := false
 	for _, existingPeerID := range existingPeerIDs {
 		existingPeer := r.GetPeers()[existingPeerID]
 		if existingPeer == nil {
@@ -103,7 +104,13 @@ func (c *Client) handleJoin(req protocol.Request) {
 			log.Printf("🔗 SUBSCRIBER: Adding %s track from existing peer %s to new peer %s",
 				track.Kind(), existingPeerID, params.PeerID)
 			peer.AddTrackToSubscriber(track)
+			addedTracks = true
 		}
+	}
+
+	// Если добавлены треки, планируем renegotiation (только один раз)
+	if addedTracks {
+		peer.ScheduleRenegotiation()
 	}
 
 	// Уведомляем всех остальных участников о новом peer
@@ -183,7 +190,6 @@ func (c *Client) handleSubscriberAnswer(req protocol.Request) {
 		return
 	}
 
-	// ✅ params.SDP уже строка!
 	if err := c.peer.HandleSubscriberAnswer(params.SDP); err != nil {
 		log.Printf("❌ Error handling subscriber answer: %v", err)
 		c.sendError(req.ID, protocol.ErrCodeSDPError, err.Error())
