@@ -52,8 +52,9 @@ type PublisherOfferResult struct {
 
 // Send Subscriber Answer
 type SubscriberAnswerParams struct {
-	SDP  string `json:"sdp"`
-	Type string `json:"type"` // "answer"
+	PeerID string `json:"peerId"`
+	SDP    string `json:"sdp"`
+	Type   string `json:"type"` // "answer"
 }
 
 type SubscriberAnswerResult struct {
@@ -62,7 +63,8 @@ type SubscriberAnswerResult struct {
 
 // Send ICE Candidate
 type IceCandidateParams struct {
-	Target        string `json:"target"` // "publisher" or "subscriber"
+	Target        string `json:"target"`           // "publisher" or "subscriber"
+	PeerID        string `json:"peerId,omitempty"` // ID целевого участника (для subscriber)
 	Candidate     string `json:"candidate"`
 	SDPMid        string `json:"sdpMid"`
 	SDPMLineIndex uint16 `json:"sdpMLineIndex"`

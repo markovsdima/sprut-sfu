@@ -4,18 +4,24 @@ package room
 import (
 	"log"
 	"sync"
+
+	"github.com/pion/webrtc/v4"
 )
 
 type Room struct {
-	name    string
-	peers   map[string]*Peer
-	peersMu sync.RWMutex
+	name           string
+	peers          map[string]*Peer
+	peersMu        sync.RWMutex
+	trackReceivers map[*webrtc.TrackLocalStaticRTP]*webrtc.RTPReceiver // Maps original receiver per local track
+	trackSSRC      map[*webrtc.TrackLocalStaticRTP]uint32              // SSRC per local track
 }
 
 func NewRoom(name string) *Room {
 	return &Room{
-		name:  name,
-		peers: map[string]*Peer{},
+		name:           name,
+		peers:          map[string]*Peer{},
+		trackReceivers: make(map[*webrtc.TrackLocalStaticRTP]*webrtc.RTPReceiver),
+		trackSSRC:      make(map[*webrtc.TrackLocalStaticRTP]uint32),
 	}
 }
 
@@ -36,8 +42,18 @@ func (r *Room) AddPeer(p *Peer) {
 func (r *Room) RemovePeer(p *Peer) {
 	r.peersMu.Lock()
 	defer r.peersMu.Unlock()
+
+	// Cleanup tracks published by this peer
+	for _, track := range p.GetPublishedTracks() {
+		delete(r.trackReceivers, track)
+		delete(r.trackSSRC, track)
+		log.Printf("🧹 Cleaned up track %s metadata from room %s", track.ID(), r.name)
+	}
+
 	delete(r.peers, p.ID)
-	p.Close()
+
+	p.closeConnections()
+
 	log.Printf("👋 Peer %s left room %s", p.ID, r.name)
 	log.Printf("📊 Room %s now has %d peers", r.name, len(r.peers))
 }
@@ -87,10 +103,15 @@ func (r *Room) Close() {
 
 	// Закрываем всех пиров в комнате
 	for _, peer := range r.peers {
-		peer.Close()
+		peer.closeConnections()
 	}
 
-	// Очищаем мапу пиров
+	// Clean peers map
 	r.peers = make(map[string]*Peer)
-	log.Printf("🗑️  Room %s closed", r.name)
+
+	// Clen metadata maps
+	r.trackReceivers = make(map[*webrtc.TrackLocalStaticRTP]*webrtc.RTPReceiver)
+	r.trackSSRC = make(map[*webrtc.TrackLocalStaticRTP]uint32)
+
+	log.Printf("🗑️  Room %s closed and all track metadata cleaned", r.name)
 }
