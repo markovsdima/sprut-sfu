@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>SFU Group Video Tester</title>
+<style>
+  body { font-family: system-ui; margin: 20px; background: #fafafa; }
+  h2 { margin-bottom: 6px; }
+  button { margin: 5px; padding: 8px 16px; font-size: 15px; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  input { padding: 8px; font-size: 15px; }
+  #status { padding: 10px; background: #eee; border-radius: 8px; margin-top: 10px; width: fit-content; }
+  .log { white-space: pre-wrap; background: #111; color: #0f0; padding: 10px; height: 250px; overflow-y: auto; border-radius: 6px; margin-top: 10px; font-size: 12px; font-family: monospace; }
+  
+  .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px; margin-top: 20px; }
+  .video-box { background: #000; border-radius: 8px; overflow: hidden; position: relative; }
+  .video-box video { width: 100%; height: 240px; object-fit: cover; display: block; }
+  .video-label { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.7); color: white; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: bold; }
+  .video-label.local { background: rgba(0,100,255,0.8); }
+  
+  .stats { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: #0f0; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-family: monospace; }
+</style>
+</head>
+<body>
+  <h2>🎥 SFU Group Video Tester</h2>
+  <input id="displayName" value="Browser Tester" placeholder="Your Name" />
+  <input id="room" value="test-room" placeholder="Room ID" />
+  <label><input type="checkbox" id="enableVideo" checked /> Enable Video</label>
+  <button id="join">Join Room</button>
+  <button id="leave" disabled>Leave Room</button>
+
+  <div id="status">
+    WebSocket: <span id="wsStatus">🔴 disconnected</span> |
+    Publisher: <span id="pubStatus">⚪ new</span> |
+    Participants: <span id="participantCount">0</span>
+  </div>
+
+  <div class="video-grid" id="videoGrid"></div>
+
+  <div class="log" id="log"></div>
+
+<script>
+let ws;
+let publisherPC;
+let subscriberPC;
+let peerDisplayNames = new Map();
+let activeStreams = new Map(); // peerId -> MediaStream
+let localStream;
+let peerId = "browser-" + Math.floor(Math.random()*10000);
+let requestId = 1;
+let joinReceived = false;
+let publisherOfferSent = false;
+let pendingPublisherICE = [];
+let pendingSubscriberICE = []; // Now single array for single PC
+
+const logEl = document.getElementById("log");
+const log = msg => {
+  console.log(msg);
+  const timestamp = new Date().toLocaleTimeString();
+  logEl.textContent += `[${timestamp}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+};
+
+function setWsStatus(ok) {
+  document.getElementById("wsStatus").textContent = ok ? "🟢 connected" : "🔴 disconnected";
+}
+
+function setPubStatus(state) {
+  document.getElementById("pubStatus").textContent = state;
+}
+
+function updateParticipantCount() {
+  document.getElementById("participantCount").textContent = activeStreams.size;
+}
+
+function createVideoElement(peerId, displayName, isLocal = false) {
+  const grid = document.getElementById("videoGrid");
+  
+  let box = document.getElementById(`video-box-${peerId}`);
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "video-box";
+    box.id = `video-box-${peerId}`;
+    
+    const video = document.createElement("video");
+    video.id = `video-${peerId}`;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    if (isLocal) video.muted = true;
+    
+    video.addEventListener('loadedmetadata', () => log(`📹 Video metadata loaded for ${peerId}`));
+    video.addEventListener('loadeddata', () => log(`📹 Video data loaded for ${peerId} - should start playing soon`));
+    video.addEventListener('canplay', () => log(`📹 Video can play for ${peerId}`));
+    video.addEventListener('play', () => log(`▶️ Video started playing for ${peerId}`));
+    video.addEventListener('waiting', () => log(`⏸️ Video buffering/waiting for ${peerId}`));
+    video.addEventListener('stalled', () => log(`⚠️ Video stalled for ${peerId}`));
+    video.addEventListener('error', (e) => log(`❌ Video error for ${peerId}: ${e.message}`));
+    
+    const checkReadyState = () => {
+      const states = ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'];
+      log(`📊 Video readyState for ${peerId}: ${states[video.readyState]}`);
+    };
+    video.addEventListener('loadedmetadata', checkReadyState);
+    video.addEventListener('canplay', checkReadyState);
+    setInterval(() => {
+      if (video.srcObject && !isLocal) {
+        checkReadyState();
+      }
+    }, 5000);
+    
+    const label = document.createElement("div");
+    label.className = isLocal ? "video-label local" : "video-label";
+    label.textContent = displayName + (isLocal ? " (You)" : "");
+    
+    const stats = document.createElement("div");
+    stats.className = "stats";
+    stats.id = `stats-${peerId}`;
+    stats.textContent = "●";
+    
+    box.appendChild(video);
+    box.appendChild(label);
+    box.appendChild(stats);
+    
+    if (isLocal) {
+      grid.insertBefore(box, grid.firstChild);
+    } else {
+      grid.appendChild(box);
+    }
+    
+    log(`🖼️ Created video element for ${peerId} (black until stream set)`);
+  }
+  
+  return document.getElementById(`video-${peerId}`);
+}
+
+function removeVideoElement(peerId) {
+  const box = document.getElementById(`video-box-${peerId}`);
+  if (box) box.remove();
+  activeStreams.delete(peerId);
+  updateParticipantCount();
+}
+
+async function createPublisher() {
+  publisherPC = new RTCPeerConnection({
+    iceServers: [{
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302"
+      ]
+    }]
+  });
+
+  publisherPC.oniceconnectionstatechange = () => {
+    log(`🧊 Publisher ICE state: ${publisherPC.iceConnectionState}`);
+  };
+
+  publisherPC.onconnectionstatechange = () => {
+    setPubStatus("📡 " + publisherPC.connectionState);
+    log(`Publisher connection state: ${publisherPC.connectionState}`);
+  };
+
+  publisherPC.onicecandidate = e => {
+    if (e.candidate && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "ice.candidate",
+        params: {
+          target: "publisher",
+          candidate: e.candidate.candidate,
+          sdpMid: e.candidate.sdpMid,
+          sdpMLineIndex: e.candidate.sdpMLineIndex
+        },
+        id: requestId++
+      }));
+      log("🧊 Sent publisher ICE");
+    }
+  };
+
+  try {
+    const enableVideo = document.getElementById("enableVideo").checked;
+    localStream = await navigator.mediaDevices.getUserMedia({ 
+      audio: true, 
+      video: enableVideo ? { width: 640, height: 480 } : false 
+    });
+    
+    log(`🎤 Got local ${enableVideo ? 'audio+video' : 'audio'} stream`);
+    
+    const localVideo = createVideoElement(peerId, document.getElementById("displayName").value, true);
+    localVideo.srcObject = localStream;
+
+    localStream.getTracks().forEach(track => {
+      publisherPC.addTrack(track, localStream);
+      log(`➕ Added ${track.kind} track to publisher`);
+    });
+  } catch (e) {
+    log("❌ Error getting media: " + e.message);
+    return false;
+  }
+
+  return true;
+}
+
+function createSubscriberPC() {
+  if (subscriberPC) {
+    log(`⚠️ Subscriber PC already exists`);
+    return subscriberPC;
+  }
+
+  log(`🔗 Creating single subscriber PC`);
+
+  const pc = new RTCPeerConnection({
+    iceServers: [{
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302"
+      ]
+    }]
+  });
+
+  pc.oniceconnectionstatechange = () => {
+    log(`🧊 Subscriber ICE state: ${pc.iceConnectionState}`);
+  };
+
+  pc.onconnectionstatechange = () => {
+    log(`Subscriber: ${pc.connectionState}`);
+    // Update stats for all active peers
+    if (pc.connectionState === "connected") {
+      startStatsLogging(pc);
+    }
+  };
+
+  pc.onicecandidate = e => {
+    if (e.candidate && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "ice.candidate",
+        params: {
+          target: "subscriber",
+          candidate: e.candidate.candidate,
+          sdpMid: e.candidate.sdpMid,
+          sdpMLineIndex: e.candidate.sdpMLineIndex
+        },
+        id: requestId++
+      }));
+      log(`🧊 Sent subscriber ICE`);
+    }
+  };
+
+  pc.ontrack = e => {
+    const stream = e.streams[0];
+    const remotePeerId = stream.id; // Assuming server sets streamID to peerID
+    const displayName = peerDisplayNames.get(remotePeerId) || "Unknown";
+    
+    log(`🎧 Received ${e.track.kind} track from ${remotePeerId} (${displayName}) at ${new Date().toISOString()}`);
+    log(`🔍 Track details: enabled=${e.track.enabled}, readyState=${e.track.readyState}, muted=${e.track.muted}`);
+    
+    if (!activeStreams.has(remotePeerId)) {
+      activeStreams.set(remotePeerId, stream);
+      updateParticipantCount();
+    } else {
+      // Add to existing stream if same ID
+      const existingStream = activeStreams.get(remotePeerId);
+      if (e.track.kind === 'video' || e.track.kind === 'audio') {
+        existingStream.addTrack(e.track);
+      }
+    }
+    
+    const video = createVideoElement(remotePeerId, displayName, false);
+    
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+      log(`🎬 Set srcObject for ${remotePeerId} at ${new Date().toISOString()}`);
+      video.play().catch(err => log(`⚠️ Auto-play failed for ${remotePeerId}: ${err.message}`));
+      
+      // Handle track end to clean up
+      e.track.onended = () => {
+        log(`🛑 Track ended for ${remotePeerId}: ${e.track.kind}`);
+        if (stream.getTracks().every(t => t.readyState === 'ended')) {
+          removeVideoElement(remotePeerId);
+        }
+      };
+    }
+    
+    if (pc.remoteDescription) {
+      log(`📄 Remote SDP (snippet): ${pc.remoteDescription.sdp.substring(0, 200)}...`);
+    }
+  };
+
+  subscriberPC = pc;
+  
+  return pc;
+}
+
+// Периодический getStats для всех inbound
+function startStatsLogging(pc) {
+  const interval = setInterval(async () => {
+    if (pc.connectionState !== "connected") {
+      clearInterval(interval);
+      return;
+    }
+    try {
+      const stats = await pc.getStats();
+      const videoStatsByPeer = new Map();
+      stats.forEach(report => {
+        if (report.type === "inbound-rtp" && report.mediaType === "video") {
+          // To map to peer, perhaps use report.trackIdentifier or something; but for now, log all
+          // Assume one video per peer for simplicity, or aggregate
+          const packetsLost = report.packetsLost || 0;
+          const totalPackets = report.packetsReceived || 0;
+          const lossPercent = totalPackets > 0 ? Math.round((packetsLost / totalPackets) * 100) : 0;
+          const jitter = report.jitter || 0;
+          // Bitrate approx
+          const bitrate = report.bytesReceived ? Math.round((report.bytesReceived * 8) / 2000) : 0; // rough
+          log(`📈 Video stats (all): bitrate=${bitrate}bps, lost=${lossPercent}%, jitter=${jitter}ms`);
+          // To per-peer, need better mapping, perhaps log generically
+        }
+      });
+    } catch (e) {
+      log(`⚠️ Stats error: ${e.message}`);
+    }
+  }, 2000);
+}
+
+async function sendPublisherOffer() {
+  if (publisherOfferSent) {
+    log("⚠️ Publisher offer already sent");
+    return;
+  }
+  
+  publisherOfferSent = true;
+  
+  const offer = await publisherPC.createOffer();
+  await publisherPC.setLocalDescription(offer);
+
+  log(`📤 Publisher offer SDP (snippet): ${offer.sdp.substring(0, 200)}...`);
+
+  ws.send(JSON.stringify({
+    jsonrpc: "2.0",
+    method: "publisher.offer",
+    params: { 
+      sdp: offer.sdp,
+      type: offer.type
+    },
+    id: requestId++
+  }));
+  log("📤 Sent publisher offer");
+}
+
+async function handleMessage(msg) {
+  if (msg.id === 1 && msg.result && msg.result.success !== undefined) {
+    if (joinReceived) {
+      log("⚠️ Duplicate join response");
+      return;
+    }
+    joinReceived = true;
+    
+    log(`✅ Join successful! Peers in room: ${msg.result.peers?.length || 0}`);
+    
+    if (msg.result.peers && msg.result.peers.length > 0) {
+      for (const p of msg.result.peers) {
+        if (p !== peerId) {
+          peerDisplayNames.set(p, 'Unknown'); // Will update on peerJoined if needed
+        }
+      }
+    }
+    
+    // Create subscriber PC after join
+    createSubscriberPC();
+    
+    await sendPublisherOffer();
+    return;
+  }
+
+  if (msg.id && msg.result && msg.result.sdp && msg.result.type === "answer") {
+    try {
+      if (publisherPC && publisherPC.signalingState === "have-local-offer") {
+        await publisherPC.setRemoteDescription(new RTCSessionDescription({
+          type: msg.result.type,
+          sdp: msg.result.sdp
+        }));
+        log(`✅ Publisher answer set at ${new Date().toISOString()}`);
+        log(`📄 Publisher remote SDP (snippet): ${msg.result.sdp.substring(0, 200)}...`);
+        
+        for (const ice of pendingPublisherICE) {
+          try {
+            await publisherPC.addIceCandidate(new RTCIceCandidate(ice));
+            log("🧊 Added buffered publisher ICE");
+          } catch (e) {
+            log("⚠️ Error adding buffered ICE: " + e.message);
+          }
+        }
+        pendingPublisherICE = [];
+      }
+    } catch (e) {
+      log("❌ Error setting publisher answer: " + e.message);
+    }
+    return;
+  }
+
+  if (msg.method === "subscriberOffer") {
+    const { sdp } = msg.params;
+    
+    log(`📨 Received subscriber offer at ${new Date().toISOString()}`);
+    log(`📄 Subscriber offer SDP (snippet): ${sdp.substring(0, 200)}...`);
+    
+    let pc = subscriberPC;
+    if (!pc) {
+      pc = createSubscriberPC();
+    }
+    
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription({
+        type: "offer",
+        sdp: sdp
+      }));
+      log(`✅ Subscriber remote description set at ${new Date().toISOString()}`);
+
+      // Apply buffered ICE
+      if (pendingSubscriberICE.length > 0) {
+        log(`🧊 Applying ${pendingSubscriberICE.length} buffered ICE candidates`);
+        for (const ice of pendingSubscriberICE) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(ice));
+            log(`🧊 Added buffered ICE`);
+          } catch (e) {
+            log(`⚠️ Error adding buffered ICE: ${e.message}`);
+          }
+        }
+        pendingSubscriberICE = [];
+      }
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      
+      log(`📤 Subscriber answer SDP (snippet): ${answer.sdp.substring(0, 200)}...`);
+      
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "subscriber.answer",
+        params: { 
+          sdp: answer.sdp,
+          type: answer.type
+        },
+        id: requestId++
+      }));
+      log(`📤 Sent subscriber answer`);
+    } catch (e) {
+      log(`❌ Error handling subscriber offer: ${e.message}`);
+    }
+    return;
+  }
+
+  if (msg.method === "iceCandidate") {
+    const c = msg.params;
+    const iceCand = {
+      candidate: c.candidate,
+      sdpMid: c.sdpMid,
+      sdpMLineIndex: c.sdpMLineIndex
+    };
+
+    if (c.target === "publisher") {
+      if (publisherPC && publisherPC.remoteDescription) {
+        try {
+          await publisherPC.addIceCandidate(new RTCIceCandidate(iceCand));
+          log(`🧊 Added publisher ICE at ${new Date().toISOString()}`);
+        } catch (e) {
+          log(`⚠️ Error adding publisher ICE: ${e.message}`);
+        }
+      } else {
+        pendingPublisherICE.push(iceCand);
+        log(`🕒 Buffered publisher ICE (remote desc not set)`);
+      }
+    } else if (c.target === "subscriber") {
+      if (subscriberPC && subscriberPC.remoteDescription) {
+        try {
+          await subscriberPC.addIceCandidate(new RTCIceCandidate(iceCand));
+          log(`🧊 Added subscriber ICE at ${new Date().toISOString()}`);
+        } catch (e) {
+          log(`⚠️ Error adding subscriber ICE: ${e.message}`);
+        }
+      } else {
+        pendingSubscriberICE.push(iceCand);
+        log(`🕒 Buffered subscriber ICE (remote desc not set)`);
+      }
+    }
+    return;
+  }
+
+  if (msg.method === "peerJoined") {
+    const { peerId: newPeerId, displayName } = msg.params;
+    log(`👤 Peer joined: ${displayName} (${newPeerId}) at ${new Date().toISOString()}`);
+    
+    if (newPeerId !== peerId) {
+      peerDisplayNames.set(newPeerId, displayName);
+    }
+    return;
+  }
+
+  if (msg.method === "peerLeft") {
+    const { peerId: leftPeerId } = msg.params;
+    log(`👋 Peer left: ${leftPeerId}`);
+    removeVideoElement(leftPeerId);
+    return;
+  }
+
+  if (msg.error) {
+    log(`❌ Error: ${msg.error.message} (code: ${msg.error.code})`);
+    return;
+  }
+
+  log("📩 Message: " + JSON.stringify(msg).substring(0, 100));
+}
+
+document.getElementById("join").onclick = async () => {
+  const room = document.getElementById("room").value;
+  if (!room) {
+    log("❌ Please enter a room ID");
+    return;
+  }
+
+  joinReceived = false;
+  publisherOfferSent = false;
+  pendingSubscriberICE = [];
+
+  log("🚀 Starting connection...");
+
+  if (!await createPublisher()) {
+    return;
+  }
+
+  ws = new WebSocket(`ws://localhost:8080/ws?peerId=${peerId}`);
+  setWsStatus(false);
+
+  ws.onopen = () => {
+    setWsStatus(true);
+    log("🌐 WebSocket connected");
+    
+    ws.send(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "join",
+      params: { 
+        roomId: room, 
+        peerId: peerId, 
+        displayName: document.getElementById("displayName").value || "Browser Tester",
+        auth: ""
+      },
+      id: 1
+    }));
+    log("📤 Sent join request");
+  };
+
+  ws.onmessage = async event => {
+    try {
+      const msg = JSON.parse(event.data);
+      await handleMessage(msg);
+    } catch (e) {
+      log("❌ Error handling message: " + e.message);
+      console.error(e);
+    }
+  };
+
+  ws.onerror = err => {
+    log("❌ WebSocket error");
+    console.error(err);
+  };
+
+  ws.onclose = () => {
+    setWsStatus(false);
+    log("🔌 WebSocket closed");
+  };
+
+  document.getElementById("join").disabled = true;
+  document.getElementById("leave").disabled = false;
+};
+
+document.getElementById("leave").onclick = () => {
+  log("👋 Leaving room...");
+
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+
+  if (publisherPC) {
+    publisherPC.close();
+    publisherPC = null;
+  }
+
+  if (subscriberPC) {
+    subscriberPC.close();
+    subscriberPC = null;
+  }
+
+  activeStreams.forEach((stream, peerId) => removeVideoElement(peerId));
+  activeStreams.clear();
+  peerDisplayNames.clear();
+  updateParticipantCount();
+
+  removeVideoElement(peerId);
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "leave",
+        params: { roomId: document.getElementById("room").value },
+        id: requestId++
+      }));
+    } catch (e) {
+      log("⚠️ Error sending leave: " + e.message);
+    }
+    ws.close();
+    ws = null;
+  }
+
+  document.getElementById("join").disabled = false;
+  document.getElementById("leave").disabled = true;
+  
+  setPubStatus("⚪ closed");
+  
+  joinReceived = false;
+  publisherOfferSent = false;
+  pendingSubscriberICE = [];
+  
+  log("✅ Left the room");
+};
+
+log("Ready! Enter room ID and click Join.");
+</script>
+</body>
+</html>
