@@ -364,7 +364,7 @@ func (p *Peer) getOrCreateSubscriber() *webrtc.PeerConnection {
 	pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
 		Direction: webrtc.RTPTransceiverDirectionRecvonly,
 	})
-	log.Printf("✅ Added transceivers to subscriber for peer %s", p.ID)
+	log.Printf("✅ Created unified subscriber connection")
 
 	p.Subscriber = pc
 
@@ -535,4 +535,42 @@ func (p *Peer) Close() {
 
 func (p *Peer) setRoom(room *Room) {
 	p.Room = room
+}
+
+// removeTracksFromSubscriber removes specified tracks from this peer's subscriber connection
+func (p *Peer) removeTracksFromSubscriber(tracks []*webrtc.TrackLocalStaticRTP) {
+	p.subMu.Lock()
+	pc := p.Subscriber
+	p.subMu.Unlock()
+
+	if pc == nil {
+		return // No subscriber connection yet
+	}
+
+	removedCount := 0
+
+	// Get all senders
+	senders := pc.GetSenders()
+
+	for _, track := range tracks {
+		// Find and remove corresponding sender
+		for _, sender := range senders {
+			if sender.Track() != nil && sender.Track().ID() == track.ID() {
+				if err := pc.RemoveTrack(sender); err != nil {
+					log.Printf("⚠️ Failed to remove track %s from peer %s subscriber: %v",
+						track.ID(), p.ID, err)
+				} else {
+					removedCount++
+					log.Printf("✅ Removed track %s from peer %s subscriber", track.ID(), p.ID)
+				}
+				break
+			}
+		}
+	}
+
+	// Trigger renegotiation if any tracks were removed
+	if removedCount > 0 {
+		log.Printf("🔄 Scheduling renegotiation for peer %s after removing %d tracks", p.ID, removedCount)
+		p.ScheduleRenegotiation()
+	}
 }
