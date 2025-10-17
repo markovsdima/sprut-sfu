@@ -5,10 +5,14 @@ import (
 	"log"
 	"simple-sfu/internal/config"
 	"sync"
+	"time"
 
 	"github.com/pion/rtcp" // For PLI/FIR packets
 	"github.com/pion/webrtc/v4"
 )
+
+// TODO: почему без этой задержки iOS WebRTC не всегда добавляет видео-трек собеседника
+const renegotiationDebounce = 550 * time.Millisecond
 
 // SignalingClient interface avoids circular dependency with signaling package
 type SignalingClient interface {
@@ -34,6 +38,8 @@ type Peer struct {
 
 	// Single buffer for subscriber ICE
 	subscriberICE []webrtc.ICECandidateInit
+
+	renegotiationTimer *time.Timer
 }
 
 func NewPeer(id string, client SignalingClient, cfg *config.Config) *Peer {
@@ -45,6 +51,7 @@ func NewPeer(id string, client SignalingClient, cfg *config.Config) *Peer {
 		subscriberICE:        make([]webrtc.ICECandidateInit, 0),
 		pendingRenegotiation: false,
 		isNegotiating:        false,
+		renegotiationTimer:   nil,
 	}
 }
 
@@ -364,7 +371,7 @@ func (p *Peer) getOrCreateSubscriber() *webrtc.PeerConnection {
 	pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
 		Direction: webrtc.RTPTransceiverDirectionRecvonly,
 	})
-	log.Printf("✅ Added transceivers to subscriber for peer %s", p.ID)
+	log.Printf("✅ Created unified subscriber connection")
 
 	p.Subscriber = pc
 
@@ -416,33 +423,51 @@ func (p *Peer) ScheduleRenegotiation() {
 	p.renegotiationMu.Lock()
 	defer p.renegotiationMu.Unlock()
 
-	// Если renegotiation уже запланирована или идет - выходим
-	if p.pendingRenegotiation || p.isNegotiating {
-		log.Printf("🔄 Renegotiation already scheduled or in progress for peer %s", p.ID)
+	// Если уже идет negotiation - просто помечаем pending
+	if p.isNegotiating {
+		log.Printf("🔄 Renegotiation in progress, marking as pending for peer %s", p.ID)
+		p.pendingRenegotiation = true
 		return
 	}
 
-	p.pendingRenegotiation = true
-
-	// Проверяем состояние синхронно
+	// Проверяем состояние
 	p.subMu.Lock()
 	pc := p.Subscriber
 	p.subMu.Unlock()
 
 	if pc == nil {
-		p.pendingRenegotiation = false
 		return
 	}
 
-	// Если состояние стабильное - запускаем renegotiation немедленно
-	if pc.SignalingState() == webrtc.SignalingStateStable {
-		p.pendingRenegotiation = false
-		p.isNegotiating = true
-		go p.performRenegotiation()
-	} else {
-		log.Printf("⏳ Subscriber not stable for peer %s, state: %s. Scheduling renegotiation.",
+	// Если состояние не стабильное - помечаем pending и выходим
+	if pc.SignalingState() != webrtc.SignalingStateStable {
+		log.Printf("⏳ Subscriber not stable for peer %s, state: %s. Will renegotiate when stable.",
 			p.ID, pc.SignalingState().String())
+		p.pendingRenegotiation = true
+		return
 	}
+
+	// Debounce logic
+	// ==============
+	// Cancel previous timer if exists
+	if p.renegotiationTimer != nil {
+		p.renegotiationTimer.Stop()
+		log.Printf("🔄 Resetting renegotiation timer for peer %s", p.ID)
+	}
+
+	// Set new timer
+	p.renegotiationTimer = time.AfterFunc(renegotiationDebounce, func() {
+		p.renegotiationMu.Lock()
+		p.isNegotiating = true
+		p.pendingRenegotiation = false
+		p.renegotiationTimer = nil
+		p.renegotiationMu.Unlock()
+
+		log.Printf("⏰ Debounce timer fired, performing renegotiation for peer %s", p.ID)
+		p.performRenegotiation()
+	})
+
+	log.Printf("⏱️  Scheduled debounced renegotiation in 150ms for peer %s", p.ID)
 }
 
 // performRenegotiation выполняет renegotiation для subscriber соединения
@@ -498,6 +523,14 @@ func (p *Peer) performRenegotiation() {
 // closeConnections закрывает только соединения, БЕЗ обращения к Room
 // Вызывается из Room.RemovePeer() и Room.Close()
 func (p *Peer) closeConnections() {
+	// Отменяем таймер если есть
+	p.renegotiationMu.Lock()
+	if p.renegotiationTimer != nil {
+		p.renegotiationTimer.Stop()
+		p.renegotiationTimer = nil
+	}
+	p.renegotiationMu.Unlock()
+
 	// Закрываем publisher
 	if p.Publisher != nil {
 		p.Publisher.Close()
@@ -535,4 +568,42 @@ func (p *Peer) Close() {
 
 func (p *Peer) setRoom(room *Room) {
 	p.Room = room
+}
+
+// removeTracksFromSubscriber removes specified tracks from this peer's subscriber connection
+func (p *Peer) removeTracksFromSubscriber(tracks []*webrtc.TrackLocalStaticRTP) {
+	p.subMu.Lock()
+	pc := p.Subscriber
+	p.subMu.Unlock()
+
+	if pc == nil {
+		return // No subscriber connection yet
+	}
+
+	removedCount := 0
+
+	// Get all senders
+	senders := pc.GetSenders()
+
+	for _, track := range tracks {
+		// Find and remove corresponding sender
+		for _, sender := range senders {
+			if sender.Track() != nil && sender.Track().ID() == track.ID() {
+				if err := pc.RemoveTrack(sender); err != nil {
+					log.Printf("⚠️ Failed to remove track %s from peer %s subscriber: %v",
+						track.ID(), p.ID, err)
+				} else {
+					removedCount++
+					log.Printf("✅ Removed track %s from peer %s subscriber", track.ID(), p.ID)
+				}
+				break
+			}
+		}
+	}
+
+	// Trigger renegotiation if any tracks were removed
+	if removedCount > 0 {
+		log.Printf("🔄 Scheduling renegotiation for peer %s after removing %d tracks", p.ID, removedCount)
+		p.ScheduleRenegotiation()
+	}
 }

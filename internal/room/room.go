@@ -41,21 +41,46 @@ func (r *Room) AddPeer(p *Peer) {
 
 func (r *Room) RemovePeer(p *Peer) {
 	r.peersMu.Lock()
-	defer r.peersMu.Unlock()
+
+	// Get list of tracks to remove BEFORE cleanup
+	tracksToRemove := p.GetPublishedTracks()
 
 	// Cleanup tracks published by this peer
-	for _, track := range p.GetPublishedTracks() {
+	for _, track := range tracksToRemove {
 		delete(r.trackReceivers, track)
 		delete(r.trackSSRC, track)
 		log.Printf("🧹 Cleaned up track %s metadata from room %s", track.ID(), r.name)
 	}
 
 	delete(r.peers, p.ID)
+	r.peersMu.Unlock()
+
+	// Remove tracks from other peers' subscribers BEFORE closing connections
+	if len(tracksToRemove) > 0 {
+		log.Printf("🔄 Removing %d tracks from other peers' subscribers", len(tracksToRemove))
+		r.removeTracksFromOtherPeers(p.ID, tracksToRemove)
+	}
 
 	p.closeConnections()
 
 	log.Printf("👋 Peer %s left room %s", p.ID, r.name)
 	log.Printf("📊 Room %s now has %d peers", r.name, len(r.peers))
+}
+
+// removeTracksFromOtherPeers removes leaving peer's tracks from all other subscribers
+func (r *Room) removeTracksFromOtherPeers(leavingPeerID string, tracks []*webrtc.TrackLocalStaticRTP) {
+	r.peersMu.RLock()
+	otherPeers := make([]*Peer, 0, len(r.peers))
+	for id, peer := range r.peers {
+		if id != leavingPeerID {
+			otherPeers = append(otherPeers, peer)
+		}
+	}
+	r.peersMu.RUnlock()
+
+	for _, otherPeer := range otherPeers {
+		otherPeer.removeTracksFromSubscriber(tracks)
+	}
 }
 
 // ForwardTrack перенаправляет трек от одного peer всем остальным
