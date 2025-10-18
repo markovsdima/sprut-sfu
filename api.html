@@ -408,6 +408,42 @@
   </div>
 </div>
 
+<h3 id="camera-state">camera.state <span class="status-badge status-optional">опциональный</span></h3>
+<p>Уведомить сервер о состоянии камеры (включена/отключена) для оптимизации трафика</p>
+
+<div class="example">
+  <strong>Запрос:</strong>
+  <div class="code-block">
+    <button class="copy-button" onclick="copyToClipboard(this)">Копировать</button>
+    <pre><code class="language-json">{
+  "jsonrpc": "2.0",
+  "method": "camera.state",
+  "params": {
+    "enabled": true
+  },
+  "id": 6
+}</code></pre>
+  </div>
+</div>
+
+<div class="example">
+  <strong>Ответ:</strong>
+  <div class="code-block">
+    <button class="copy-button" onclick="copyToClipboard(this)">Копировать</button>
+    <pre><code class="language-json">{
+  "jsonrpc": "2.0",
+  "result": {
+    "success": true
+  },
+  "id": 6
+}</code></pre>
+  </div>
+</div>
+
+<div class="warning">
+  <strong>💡 Оптимизация:</strong> При отключении камеры сервер перестает ретранслировать видео пакеты другим участникам, экономя трафик и ресурсы CPU.
+</div>
+
 <h2>📢 Уведомления (Сервер → Клиент)</h2>
 
 <h3>subscriberOffer</h3>
@@ -482,6 +518,24 @@
   </div>
 </div>
 
+<h3>cameraStateChanged</h3>
+<p>Уведомление об изменении состояния камеры участника</p>
+
+<div class="example">
+  <strong>Уведомление:</strong>
+  <div class="code-block">
+    <button class="copy-button" onclick="copyToClipboard(this)">Копировать</button>
+    <pre><code class="language-json">{
+  "jsonrpc": "2.0",
+  "method": "cameraStateChanged",
+  "params": {
+    "peerId": "user-456",
+    "enabled": false
+  }
+}</code></pre>
+  </div>
+</div>
+
 <h3>error</h3>
 <p>Ошибка (peer_disconnected, room_full и т.д.)</p>
 
@@ -550,6 +604,24 @@ async function sendMediaOffer() {
     },
     id: 2
   }));
+}
+
+// Управление камерой
+function toggleCamera() {
+  const videoTrack = localStream.getVideoTracks()[0];
+  if (videoTrack) {
+    videoTrack.enabled = !videoTrack.enabled;
+    
+    // Уведомляем сервер для оптимизации трафика
+    ws.send(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "camera.state",
+      params: {
+        enabled: videoTrack.enabled
+      },
+      id: 3
+    }));
+  }
 }</code></pre>
   </div>
 </div>

@@ -83,6 +83,15 @@ type LeaveRoomResult struct {
 	Success bool `json:"success"`
 }
 
+// Camera state change
+type CameraStateParams struct {
+	Enabled bool `json:"enabled"`
+}
+
+type CameraStateResult struct {
+	Success bool `json:"success"`
+}
+
 // Server -> Client
 // ================
 
@@ -105,6 +114,11 @@ type PeerJoinedNotify struct {
 
 type PeerLeftNotify struct {
 	PeerID string `json:"peerId"`
+}
+
+type CameraStateChangedNotify struct {
+	PeerID  string `json:"peerId"`
+	Enabled bool   `json:"enabled"`
 }
 
 type ErrorNotify struct { // peer_disconnected, room_full, etc.

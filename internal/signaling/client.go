@@ -59,6 +59,8 @@ func (c *Client) HandleMessage(msg []byte) {
 		c.handleSubscriberAnswer(req)
 	case "ice.candidate":
 		c.handleICECandidate(req)
+	case "camera.state":
+		c.handleCameraState(req)
 	default:
 		c.sendError(req.ID, protocol.ErrCodeMethodNotFound, "method not found: "+req.Method)
 	}
@@ -301,4 +303,23 @@ func (c *Client) cleanup() {
 			c.roomManager.Remove(c.currentRoom.GetName())
 		}
 	}
+}
+
+func (c *Client) handleCameraState(req protocol.Request) {
+	if c.peer == nil {
+		c.sendError(req.ID, protocol.ErrCodeNotInRoom, "join room first")
+		return
+	}
+
+	var params protocol.CameraStateParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		c.sendError(req.ID, protocol.ErrCodeInvalidParams, "invalid params")
+		return
+	}
+
+	log.Printf("📹 Peer %s camera state: %v", c.peer.ID, params.Enabled)
+
+	c.peer.SetCameraEnabled(params.Enabled)
+
+	c.sendSuccess(req.ID, protocol.CameraStateResult{Success: true})
 }

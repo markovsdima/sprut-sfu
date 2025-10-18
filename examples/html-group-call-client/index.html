@@ -24,10 +24,11 @@
 <body>
   <h2>🎥 SFU Group Video Tester</h2>
   <input id="displayName" value="Browser Tester" placeholder="Your Name" />
-  <input id="room" value="test-room" placeholder="Room ID" />
+  <input id="room" value="group_dacfc0d5-aa6e-4f3b-8fec-8e240ac8e58b" placeholder="Room ID" />
   <label><input type="checkbox" id="enableVideo" checked /> Enable Video</label>
   <button id="join">Join Room</button>
   <button id="leave" disabled>Leave Room</button>
+  <button id="toggleVideo" disabled>📹 Disable video</button>
 
   <div id="status">
     WebSocket: <span id="wsStatus">🔴 disconnected</span> |
@@ -576,6 +577,7 @@ document.getElementById("join").onclick = async () => {
 
   document.getElementById("join").disabled = true;
   document.getElementById("leave").disabled = false;
+  document.getElementById("toggleVideo").disabled = false;
 };
 
 document.getElementById("leave").onclick = () => {
@@ -620,6 +622,7 @@ document.getElementById("leave").onclick = () => {
 
   document.getElementById("join").disabled = false;
   document.getElementById("leave").disabled = true;
+  document.getElementById("toggleVideo").disabled = true;
   
   setPubStatus("⚪ closed");
   
@@ -628,6 +631,42 @@ document.getElementById("leave").onclick = () => {
   pendingSubscriberICE = [];
   
   log("✅ Left the room");
+};
+
+document.getElementById("toggleVideo").onclick = () => {
+  if (!localStream) return;
+  
+  const videoTrack = localStream.getVideoTracks()[0];
+  if (!videoTrack) {
+    log("⚠️ No video track found");
+    return;
+  }
+  
+  videoTrack.enabled = !videoTrack.enabled;
+  
+  // 🆕 ОТПРАВЛЯЕМ СОСТОЯНИЕ КАМЕРЫ НА СЕРВЕР
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "camera.state",
+      params: { 
+        enabled: videoTrack.enabled
+      },
+      id: requestId++
+    }));
+    log(`📡 Camera state sent to server: ${videoTrack.enabled}`);
+  } else {
+    log("⚠️ Cannot send camera state - WebSocket not connected");
+  }
+  
+  const btn = document.getElementById("toggleVideo");
+  if (videoTrack.enabled) {
+    btn.textContent = "📹 Disable Video";
+    log("📹 Video enabled");
+  } else {
+    btn.textContent = "📹 Enable Video";
+    log("🚫 Video disabled (packets won't be relayed)");
+  }
 };
 
 log("Ready! Enter room ID and click Join.");
