@@ -40,6 +40,11 @@ type Peer struct {
 	subscriberICE []webrtc.ICECandidateInit
 
 	renegotiationTimer *time.Timer
+
+	// Camera state management
+	// Клиент говорит, что выключил трек. Сервер перестает пересылать пустые кадры(лишние пакеты)
+	cameraEnabled bool
+	cameraMu      sync.RWMutex
 }
 
 func NewPeer(id string, client SignalingClient, cfg *config.Config) *Peer {
@@ -52,6 +57,7 @@ func NewPeer(id string, client SignalingClient, cfg *config.Config) *Peer {
 		pendingRenegotiation: false,
 		isNegotiating:        false,
 		renegotiationTimer:   nil,
+		cameraEnabled:        true,
 	}
 }
 
@@ -223,6 +229,8 @@ func (p *Peer) AddICECandidate(target string, candidate string) error {
 // Читает RTP пакеты из remote track (от клиента) и пишет в local track
 // Local track автоматически отправляет пакеты всем подписчикам
 func (p *Peer) relayTrack(remoteTrack *webrtc.TrackRemote, localTrack *webrtc.TrackLocalStaticRTP) {
+	isVideo := remoteTrack.Kind() == webrtc.RTPCodecTypeVideo
+
 	log.Printf("🚀 RTP RELAY: Started relaying %s packets from peer %s to subscribers",
 		remoteTrack.Kind(), p.ID)
 
@@ -235,6 +243,11 @@ func (p *Peer) relayTrack(remoteTrack *webrtc.TrackRemote, localTrack *webrtc.Tr
 		rtp, _, err := remoteTrack.ReadRTP()
 		if err != nil {
 			return
+		}
+
+		// Для видео треков проверяем состояние камеры
+		if isVideo && !p.IsCameraEnabled() {
+			continue // Камера выключена - пропускаем пакет
 		}
 
 		if err := localTrack.WriteRTP(rtp); err != nil {
@@ -606,4 +619,44 @@ func (p *Peer) removeTracksFromSubscriber(tracks []*webrtc.TrackLocalStaticRTP) 
 		log.Printf("🔄 Scheduling renegotiation for peer %s after removing %d tracks", p.ID, removedCount)
 		p.ScheduleRenegotiation()
 	}
+}
+
+// MARK: - Camera state management
+
+func (p *Peer) SetCameraEnabled(enabled bool) {
+	p.cameraMu.Lock()
+	wasEnabled := p.cameraEnabled
+	p.cameraEnabled = enabled
+	p.cameraMu.Unlock()
+
+	if wasEnabled == enabled {
+		return // No change
+	}
+
+	log.Printf("📹 Camera state changed for peer %s: %v -> %v", p.ID, wasEnabled, enabled)
+
+	if p.Room != nil {
+		p.notifyOthersAboutCameraState(enabled)
+	}
+}
+
+func (p *Peer) notifyOthersAboutCameraState(enabled bool) {
+	peers := p.Room.GetPeers()
+	for _, otherPeer := range peers {
+		if otherPeer.ID == p.ID {
+			continue
+		}
+
+		otherPeer.GetClient().SendNotification("cameraStateChanged", map[string]any{
+			"peerId":  p.ID,
+			"enabled": enabled,
+		})
+	}
+}
+
+// IsCameraEnabled проверяет включена ли камера
+func (p *Peer) IsCameraEnabled() bool {
+	p.cameraMu.RLock()
+	defer p.cameraMu.RUnlock()
+	return p.cameraEnabled
 }
