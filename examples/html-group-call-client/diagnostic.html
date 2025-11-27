@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>🔍 SFU Diagnostic Client</title>
+<style>
+  body { font-family: system-ui; margin: 20px; background: #1a1a1a; color: #0f0; }
+  h2 { margin-bottom: 6px; }
+  button { margin: 5px; padding: 8px 16px; font-size: 15px; cursor: pointer; background: #0a0; border: none; color: white; border-radius: 4px; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  input { padding: 8px; font-size: 15px; background: #2a2a2a; border: 1px solid #0a0; color: #0f0; }
+  
+  #status { padding: 10px; background: #2a2a2a; border: 2px solid #0a0; border-radius: 8px; margin-top: 10px; }
+  
+  .diagnostics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin: 20px 0;
+  }
+  
+  .diag-panel {
+    background: #2a2a2a;
+    border: 2px solid #0a0;
+    border-radius: 8px;
+    padding: 15px;
+  }
+  
+  .diag-panel h3 {
+    margin-top: 0;
+    color: #0f0;
+    font-size: 16px;
+  }
+  
+  .diag-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid #333;
+    font-size: 13px;
+  }
+  
+  .diag-label { color: #888; }
+  .diag-value { color: #0f0; font-weight: bold; }
+  .diag-value.warning { color: #ff0; }
+  .diag-value.error { color: #f00; }
+  
+  .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; margin-top: 20px; }
+  .video-box { background: #2a2a2a; border: 2px solid #0a0; border-radius: 8px; padding: 10px; position: relative; }
+  .video-box.warning { border-color: #ff0; }
+  .video-box.error { border-color: #f00; }
+  .video-box video { width: 100%; height: 180px; object-fit: cover; display: block; border-radius: 4px; margin-bottom: 8px; background: #000; }
+  .video-label { font-weight: bold; font-size: 14px; margin-bottom: 5px; }
+  .video-stats { font-size: 11px; color: #888; font-family: monospace; }
+  
+  .log { white-space: pre-wrap; background: #000; color: #0f0; padding: 10px; height: 300px; overflow-y: auto; border-radius: 6px; margin-top: 10px; font-size: 11px; font-family: monospace; border: 2px solid #0a0; }
+</style>
+</head>
+<body>
+  <h2>🔍 SFU Diagnostic Client</h2>
+  
+  <div>
+    <input id="displayName" value="Diagnostic Client" placeholder="Your Name" />
+    <input id="room" value="testroom" placeholder="Room ID" />
+    <label><input type="checkbox" id="enableVideo" checked /> Video</label>
+    <button id="join">Join Room</button>
+    <button id="leave" disabled>Leave</button>
+  </div>
+
+  <div id="status">
+    WS: <span id="wsStatus">🔴 disconnected</span> |
+    Publisher: <span id="pubStatus">⚪ new</span> |
+    Subscriber: <span id="subStatus">⚪ new</span> |
+    Peers: <span id="peerCount">0</span>
+  </div>
+
+  <div class="diagnostics">
+    <div class="diag-panel">
+      <h3>📤 Publisher Diagnostics</h3>
+      <div class="diag-item">
+        <span class="diag-label">Signaling State:</span>
+        <span class="diag-value" id="pub-signaling">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">ICE Connection:</span>
+        <span class="diag-value" id="pub-ice">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">ICE Gathering:</span>
+        <span class="diag-value" id="pub-gather">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Connection State:</span>
+        <span class="diag-value" id="pub-conn">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Local Tracks:</span>
+        <span class="diag-value" id="pub-tracks">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">ICE Candidates Sent:</span>
+        <span class="diag-value" id="pub-ice-sent">0</span>
+      </div>
+    </div>
+
+    <div class="diag-panel">
+      <h3>📥 Subscriber Diagnostics</h3>
+      <div class="diag-item">
+        <span class="diag-label">Signaling State:</span>
+        <span class="diag-value" id="sub-signaling">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">ICE Connection:</span>
+        <span class="diag-value" id="sub-ice">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">ICE Gathering:</span>
+        <span class="diag-value" id="sub-gather">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Connection State:</span>
+        <span class="diag-value" id="sub-conn">-</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Remote Tracks:</span>
+        <span class="diag-value" id="sub-tracks">0</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">ICE Candidates Rcvd:</span>
+        <span class="diag-value" id="sub-ice-rcvd">0</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Buffered ICE:</span>
+        <span class="diag-value" id="sub-ice-buffered">0</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">ontrack Events:</span>
+        <span class="diag-value" id="sub-ontrack-count">0</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="video-grid" id="videoGrid"></div>
+
+  <div class="log" id="log"></div>
+
+<script>
+let ws, publisherPC, subscriberPC;
+let peerDisplayNames = new Map();
+let activeStreams = new Map();
+let trackInfoMap = new Map(); // track.id -> {peerId, kind, enabled, readyState}
+let localStream;
+let peerId = "diag-" + Math.floor(Math.random()*10000);
+let requestId = 1;
+let pendingSubscriberICE = [];
+
+// Diagnostic counters
+let pubIceSent = 0;
+let subIceRcvd = 0;
+let subOntrackCount = 0;
+let remoteTrackCount = 0;
+
+const logEl = document.getElementById("log");
+const log = (msg, level = 'info') => {
+  const timestamp = new Date().toLocaleTimeString();
+  const prefix = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : level === 'success' ? '✅' : '📋';
+  console.log(`[${level}]`, msg);
+  logEl.textContent += `[${timestamp}] ${prefix} ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+};
+
+function updateDiag(id, value, warn = false, err = false) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.textContent = value;
+    el.className = 'diag-value' + (err ? ' error' : warn ? ' warning' : '');
+  }
+}
+
+function updatePublisherDiag() {
+  if (!publisherPC) return;
+  updateDiag('pub-signaling', publisherPC.signalingState);
+  updateDiag('pub-ice', publisherPC.iceConnectionState, 
+    publisherPC.iceConnectionState === 'checking',
+    publisherPC.iceConnectionState === 'failed' || publisherPC.iceConnectionState === 'disconnected');
+  updateDiag('pub-gather', publisherPC.iceGatheringState);
+  updateDiag('pub-conn', publisherPC.connectionState,
+    publisherPC.connectionState === 'connecting',
+    publisherPC.connectionState === 'failed' || publisherPC.connectionState === 'disconnected');
+  updateDiag('pub-tracks', publisherPC.getSenders().length);
+  updateDiag('pub-ice-sent', pubIceSent);
+}
+
+function updateSubscriberDiag() {
+  if (!subscriberPC) return;
+  updateDiag('sub-signaling', subscriberPC.signalingState);
+  updateDiag('sub-ice', subscriberPC.iceConnectionState,
+    subscriberPC.iceConnectionState === 'checking',
+    subscriberPC.iceConnectionState === 'failed' || subscriberPC.iceConnectionState === 'disconnected');
+  updateDiag('sub-gather', subscriberPC.iceGatheringState);
+  updateDiag('sub-conn', subscriberPC.connectionState,
+    subscriberPC.connectionState === 'connecting',
+    subscriberPC.connectionState === 'failed' || subscriberPC.connectionState === 'disconnected');
+  updateDiag('sub-tracks', remoteTrackCount);
+  updateDiag('sub-ice-rcvd', subIceRcvd);
+  updateDiag('sub-ice-buffered', pendingSubscriberICE.length, pendingSubscriberICE.length > 0);
+  updateDiag('sub-ontrack-count', subOntrackCount);
+}
+
+function createVideoBox(peerId, displayName, isLocal = false) {
+  const grid = document.getElementById("videoGrid");
+  
+  let box = document.getElementById(`video-box-${peerId}`);
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "video-box";
+    box.id = `video-box-${peerId}`;
+    
+    const video = document.createElement("video");
+    video.id = `video-${peerId}`;
+    video.autoplay = true;
+    video.playsInline = true;
+    if (isLocal) video.muted = true;
+    
+    // Enhanced event logging
+    video.addEventListener('loadedmetadata', () => {
+      log(`📹 Metadata loaded: ${displayName} (${video.videoWidth}x${video.videoHeight})`, 'success');
+      updateVideoStats(peerId);
+    });
+    
+    video.addEventListener('loadeddata', () => {
+      log(`📹 Data loaded: ${displayName}`, 'success');
+    });
+    
+    video.addEventListener('canplay', () => {
+      log(`📹 Can play: ${displayName}`, 'success');
+    });
+    
+    video.addEventListener('play', () => {
+      log(`▶️ Playing: ${displayName}`, 'success');
+      box.classList.remove('warning', 'error');
+    });
+    
+    video.addEventListener('waiting', () => {
+      log(`⏸️ Buffering: ${displayName}`, 'warn');
+      box.classList.add('warning');
+    });
+    
+    video.addEventListener('stalled', () => {
+      log(`⚠️ Stalled: ${displayName}`, 'warn');
+      box.classList.add('warning');
+    });
+    
+    video.addEventListener('error', (e) => {
+      log(`❌ Video error: ${displayName} - ${e.message}`, 'error');
+      box.classList.add('error');
+    });
+    
+    const label = document.createElement("div");
+    label.className = "video-label";
+    label.textContent = displayName + (isLocal ? " (Local)" : "");
+    
+    const stats = document.createElement("div");
+    stats.className = "video-stats";
+    stats.id = `stats-${peerId}`;
+    stats.textContent = "Initializing...";
+    
+    box.appendChild(video);
+    box.appendChild(label);
+    box.appendChild(stats);
+    
+    if (isLocal) {
+      grid.insertBefore(box, grid.firstChild);
+    } else {
+      grid.appendChild(box);
+    }
+  }
+  
+  return document.getElementById(`video-${peerId}`);
+}
+
+function updateVideoStats(peerId) {
+  const video = document.getElementById(`video-${peerId}`);
+  const statsEl = document.getElementById(`stats-${peerId}`);
+  if (!video || !statsEl) return;
+  
+  const stream = video.srcObject;
+  if (!stream) {
+    statsEl.textContent = "No stream";
+    return;
+  }
+  
+  const tracks = stream.getTracks();
+  const videoTrack = tracks.find(t => t.kind === 'video');
+  const audioTrack = tracks.find(t => t.kind === 'audio');
+  
+  let info = [];
+  if (videoTrack) {
+    info.push(`V: ${videoTrack.readyState} ${videoTrack.enabled ? '✓' : '✗'}`);
+  }
+  if (audioTrack) {
+    info.push(`A: ${audioTrack.readyState} ${audioTrack.enabled ? '✓' : '✗'}`);
+  }
+  info.push(`State: ${['NOTHING', 'METADATA', 'CURRENT', 'FUTURE', 'ENOUGH'][video.readyState]}`);
+  
+  statsEl.textContent = info.join(' | ');
+}
+
+async function createPublisher() {
+  publisherPC = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  });
+
+  publisherPC.onsignalingstatechange = () => updatePublisherDiag();
+  publisherPC.oniceconnectionstatechange = () => {
+    log(`🧊 Publisher ICE: ${publisherPC.iceConnectionState}`);
+    updatePublisherDiag();
+    document.getElementById('pubStatus').textContent = publisherPC.iceConnectionState;
+  };
+  publisherPC.onicegatheringstatechange = () => updatePublisherDiag();
+  publisherPC.onconnectionstatechange = () => updatePublisherDiag();
+
+  publisherPC.onicecandidate = e => {
+    if (e.candidate) {
+      pubIceSent++;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          jsonrpc: "2.0",
+          method: "ice.candidate",
+          params: {
+            target: "publisher",
+            candidate: e.candidate.candidate,
+            sdpMid: e.candidate.sdpMid,
+            sdpMLineIndex: e.candidate.sdpMLineIndex
+          },
+          id: requestId++
+        }));
+        log(`🧊 Pub ICE #${pubIceSent} sent`);
+      }
+      updatePublisherDiag();
+    }
+  };
+
+  try {
+    const enableVideo = document.getElementById("enableVideo").checked;
+    localStream = await navigator.mediaDevices.getUserMedia({ 
+      audio: true, 
+      video: enableVideo ? { width: 640, height: 480 } : false 
+    });
+    
+    log(`🎤 Got local stream (${localStream.getTracks().length} tracks)`, 'success');
+    
+    const localVideo = createVideoBox(peerId, document.getElementById("displayName").value, true);
+    localVideo.srcObject = localStream;
+
+    localStream.getTracks().forEach(track => {
+      publisherPC.addTrack(track, localStream);
+      log(`➕ Added ${track.kind} track (id: ${track.id}, state: ${track.readyState})`, 'success');
+    });
+    
+    updatePublisherDiag();
+  } catch (e) {
+    log(`Error getting media: ${e.message}`, 'error');
+    return false;
+  }
+
+  return true;
+}
+
+function createSubscriberPC() {
+  if (subscriberPC) return subscriberPC;
+
+  log(`🔗 Creating subscriber PC`);
+
+  subscriberPC = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  });
+
+  subscriberPC.onsignalingstatechange = () => updateSubscriberDiag();
+  subscriberPC.oniceconnectionstatechange = () => {
+    log(`🧊 Subscriber ICE: ${subscriberPC.iceConnectionState}`);
+    updateSubscriberDiag();
+    document.getElementById('subStatus').textContent = subscriberPC.iceConnectionState;
+  };
+  subscriberPC.onicegatheringstatechange = () => updateSubscriberDiag();
+  subscriberPC.onconnectionstatechange = () => updateSubscriberDiag();
+
+  subscriberPC.onicecandidate = e => {
+    if (e.candidate && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "ice.candidate",
+        params: {
+          target: "subscriber",
+          candidate: e.candidate.candidate,
+          sdpMid: e.candidate.sdpMid,
+          sdpMLineIndex: e.candidate.sdpMLineIndex
+        },
+        id: requestId++
+      }));
+      log(`🧊 Sub ICE sent`);
+    }
+  };
+
+  subscriberPC.ontrack = e => {
+    subOntrackCount++;
+    remoteTrackCount++;
+    const stream = e.streams[0];
+    const remotePeerId = stream.id;
+    const displayName = peerDisplayNames.get(remotePeerId) || remotePeerId;
+    
+    log(`🎧 ontrack #${subOntrackCount}: ${e.track.kind} from ${displayName}`, 'success');
+    log(`   Track: id=${e.track.id}, state=${e.track.readyState}, enabled=${e.track.enabled}, muted=${e.track.muted}`);
+    log(`   Stream: id=${stream.id}, tracks=${stream.getTracks().length}`);
+    
+    trackInfoMap.set(e.track.id, {
+      peerId: remotePeerId,
+      kind: e.track.kind,
+      enabled: e.track.enabled,
+      readyState: e.track.readyState
+    });
+    
+    if (!activeStreams.has(remotePeerId)) {
+      activeStreams.set(remotePeerId, stream);
+      document.getElementById('peerCount').textContent = activeStreams.size;
+      
+      const video = createVideoBox(remotePeerId, displayName, false);
+      video.srcObject = stream;
+      
+      log(`🎬 Set srcObject for ${displayName}`, 'success');
+      
+      // Monitor video element
+      setTimeout(() => {
+        updateVideoStats(remotePeerId);
+        if (video.readyState < 2) {
+          log(`⚠️ Video not ready after 1s: ${displayName} (readyState=${video.readyState})`, 'warn');
+        }
+      }, 1000);
+      
+      setTimeout(() => updateVideoStats(remotePeerId), 3000);
+      
+      video.play().catch(err => log(`Play error: ${err.message}`, 'warn'));
+      
+      e.track.onended = () => {
+        log(`🛑 Track ended: ${displayName} ${e.track.kind}`);
+        remoteTrackCount--;
+        updateSubscriberDiag();
+      };
+      
+      e.track.onmute = () => log(`🔇 Track muted: ${displayName} ${e.track.kind}`, 'warn');
+      e.track.onunmute = () => log(`🔊 Track unmuted: ${displayName} ${e.track.kind}`, 'success');
+    }
+    
+    updateSubscriberDiag();
+  };
+
+  return subscriberPC;
+}
+
+async function handleMessage(msg) {
+  if (msg.id === 1 && msg.result) {
+    log(`✅ Joined room! Existing peers: ${msg.result.peers?.length || 0}`, 'success');
+    
+    if (msg.result.peers) {
+      msg.result.peers.forEach(p => {
+        if (p !== peerId) peerDisplayNames.set(p, 'Peer');
+      });
+    }
+    
+    createSubscriberPC();
+    
+    const offer = await publisherPC.createOffer();
+    await publisherPC.setLocalDescription(offer);
+    
+    ws.send(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "publisher.offer",
+      params: { sdp: offer.sdp, type: offer.type },
+      id: requestId++
+    }));
+    log("📤 Sent publisher offer");
+    updatePublisherDiag();
+    return;
+  }
+
+  if (msg.result && msg.result.type === "answer") {
+    await publisherPC.setRemoteDescription(new RTCSessionDescription(msg.result));
+    log("✅ Publisher answer set", 'success');
+    updatePublisherDiag();
+    return;
+  }
+
+  if (msg.method === "subscriberOffer") {
+    log("📨 Received subscriber offer");
+    
+    const pc = subscriberPC || createSubscriberPC();
+    
+    await pc.setRemoteDescription(new RTCSessionDescription({
+      type: "offer",
+      sdp: msg.params.sdp
+    }));
+    log("✅ Subscriber remote desc set", 'success');
+    
+    // Apply buffered ICE
+    if (pendingSubscriberICE.length > 0) {
+      log(`🧊 Applying ${pendingSubscriberICE.length} buffered ICE`);
+      for (const ice of pendingSubscriberICE) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(ice));
+        } catch (e) {
+          log(`ICE error: ${e.message}`, 'warn');
+        }
+      }
+      pendingSubscriberICE = [];
+    }
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    
+    ws.send(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "subscriber.answer",
+      params: { sdp: answer.sdp, type: answer.type },
+      id: requestId++
+    }));
+    log("📤 Sent subscriber answer");
+    updateSubscriberDiag();
+    return;
+  }
+
+  if (msg.method === "iceCandidate") {
+    const c = msg.params;
+    const ice = {
+      candidate: c.candidate,
+      sdpMid: c.sdpMid,
+      sdpMLineIndex: c.sdpMLineIndex
+    };
+
+    if (c.target === "subscriber") {
+      subIceRcvd++;
+      if (subscriberPC && subscriberPC.remoteDescription) {
+        try {
+          await subscriberPC.addIceCandidate(new RTCIceCandidate(ice));
+          log(`🧊 Sub ICE #${subIceRcvd} added`);
+        } catch (e) {
+          log(`ICE error: ${e.message}`, 'warn');
+        }
+      } else {
+        pendingSubscriberICE.push(ice);
+        log(`🕒 Buffered sub ICE #${subIceRcvd}`);
+      }
+      updateSubscriberDiag();
+    }
+    return;
+  }
+
+  if (msg.method === "peerJoined") {
+    const { peerId: newPeer, displayName } = msg.params;
+    log(`👤 Peer joined: ${displayName || newPeer}`);
+    if (newPeer !== peerId) {
+      peerDisplayNames.set(newPeer, displayName || 'Unknown');
+    }
+    return;
+  }
+
+  if (msg.method === "peerLeft") {
+    log(`👋 Peer left: ${msg.params.peerId}`);
+    return;
+  }
+
+  if (msg.error) {
+    log(`Error: ${msg.error.message}`, 'error');
+    return;
+  }
+}
+
+document.getElementById("join").onclick = async () => {
+  const room = document.getElementById("room").value;
+  if (!room) return;
+
+  log("🚀 Starting connection...");
+
+  if (!await createPublisher()) return;
+
+  ws = new WebSocket(`ws://localhost:8080/ws?peerId=${peerId}`);
+
+  ws.onopen = () => {
+    document.getElementById('wsStatus').textContent = "🟢 connected";
+    log("🌐 WebSocket connected", 'success');
+    
+    ws.send(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "join",
+      params: { 
+        roomId: room, 
+        peerId: peerId, 
+        displayName: document.getElementById("displayName").value,
+        auth: ""
+      },
+      id: 1
+    }));
+  };
+
+  ws.onmessage = async event => {
+    try {
+      const msg = JSON.parse(event.data);
+      await handleMessage(msg);
+    } catch (e) {
+      log(`Message error: ${e.message}`, 'error');
+    }
+  };
+
+  ws.onerror = () => log("WebSocket error", 'error');
+  ws.onclose = () => {
+    document.getElementById('wsStatus').textContent = "🔴 disconnected";
+    log("🔌 WebSocket closed");
+  };
+
+  document.getElementById("join").disabled = true;
+  document.getElementById("leave").disabled = false;
+  
+  // Periodic diagnostics
+  const diagInterval = setInterval(() => {
+    updatePublisherDiag();
+    updateSubscriberDiag();
+    activeStreams.forEach((stream, pid) => updateVideoStats(pid));
+  }, 1000);
+  
+  window.diagInterval = diagInterval;
+};
+
+document.getElementById("leave").onclick = () => {
+  if (window.diagInterval) clearInterval(window.diagInterval);
+  
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+  }
+  if (publisherPC) publisherPC.close();
+  if (subscriberPC) subscriberPC.close();
+  if (ws) ws.close();
+  
+  document.getElementById("videoGrid").innerHTML = '';
+  activeStreams.clear();
+  trackInfoMap.clear();
+  
+  document.getElementById("join").disabled = false;
+  document.getElementById("leave").disabled = true;
+  
+  log("✅ Disconnected", 'success');
+};
+
+log("🔍 Diagnostic client ready!");
+</script>
+</body>
+</html>
