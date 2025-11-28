@@ -1,6 +1,29 @@
+// Package protocol implements JSON-RPC 2.0 protocol for WebRTC signaling.
+//
+// This package defines all message types for client-server communication
+// in a Selective Forwarding Unit (SFU) architecture.
 package protocol
 
 import "encoding/json"
+
+// Method names constants
+const (
+	// Client -> Server methods
+	MethodRoomJoin         = "room.join"
+	MethodRoomLeave        = "room.leave"
+	MethodPublisherOffer   = "publisher.offer"
+	MethodSubscriberAnswer = "subscriber.answer"
+	MethodIceCandidate     = "ice.candidate"
+	MethodCameraState      = "camera.state"
+
+	// Server -> Client notifications
+	NotifySubscriberOffer    = "subscriber.offer"
+	NotifyIceCandidate       = "ice.candidate"
+	NotifyPeerJoined         = "peer.joined"
+	NotifyPeerLeft           = "peer.left"
+	NotifyCameraStateChanged = "camera.state.changed"
+	NotifyError              = "error"
+)
 
 // Base JSON-RPC 2.0 structures
 

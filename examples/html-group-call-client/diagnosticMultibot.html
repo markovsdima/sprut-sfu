@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>🤖Bot Generator</title>
+<style>
+  body { 
+    font-family: system-ui; 
+    margin: 20px; 
+    background: #1a1a1a; 
+    color: #0f0;
+  }
+  h2 { margin-bottom: 6px; }
+  
+  .controls {
+    background: #2a2a2a;
+    padding: 15px;
+    border-radius: 8px;
+    border: 2px solid #0a0;
+    margin-bottom: 20px;
+  }
+  
+  input, select { 
+    padding: 10px; 
+    font-size: 15px; 
+    background: #2a2a2a; 
+    border: 1px solid #0a0;
+    color: #0f0;
+    margin: 5px;
+  }
+  
+  button { 
+    margin: 5px; 
+    padding: 12px 20px; 
+    font-size: 16px; 
+    cursor: pointer; 
+    background: #0a0; 
+    border: none; 
+    color: white;
+    border-radius: 6px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.danger { background: #a00; }
+  
+  .stats {
+    background: #2a2a2a;
+    padding: 15px;
+    border-radius: 8px;
+    border: 2px solid #0a0;
+    margin-bottom: 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+  }
+  
+  .stat-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px;
+    border-bottom: 1px solid #333;
+  }
+  
+  .stat-label { color: #888; }
+  .stat-value { color: #0f0; font-weight: bold; }
+  .stat-value.warning { color: #ff0; }
+  .stat-value.error { color: #f00; }
+  
+  .bot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+  }
+  
+  .bot-card {
+    background: #2a2a2a;
+    border: 2px solid #555;
+    border-radius: 8px;
+    padding: 10px;
+    position: relative;
+  }
+  
+  .bot-card.connected {
+    border-color: #0f0;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+  }
+  
+  .bot-card.connecting {
+    border-color: #ff0;
+  }
+  
+  .bot-card.streaming {
+    border-color: #0af;
+    box-shadow: 0 0 10px rgba(0, 170, 255, 0.3);
+  }
+  
+  .bot-card.error {
+    border-color: #f00;
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
+  }
+  
+  .bot-card canvas {
+    width: 100%;
+    height: 150px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+  }
+  
+  .bot-name {
+    font-weight: bold;
+    font-size: 16px;
+    margin-bottom: 5px;
+  }
+  
+  .bot-status {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 5px;
+  }
+  
+  .bot-details {
+    font-size: 11px;
+    font-family: monospace;
+    color: #666;
+    line-height: 1.4;
+  }
+  
+  .bot-details div {
+    display: flex;
+    justify-content: space-between;
+  }
+  
+  .bot-remove {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: #a00;
+    border: none;
+    color: white;
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+  }
+  
+  .log { 
+    white-space: pre-wrap; 
+    background: #000; 
+    color: #0f0; 
+    padding: 10px; 
+    height: 250px; 
+    overflow-y: auto; 
+    border-radius: 6px; 
+    font-size: 11px; 
+    font-family: monospace; 
+    border: 2px solid #0a0;
+  }
+</style>
+</head>
+<body>
+  <h2>🤖 Fixed Bot Generator (with ICE buffering)</h2>
+  
+  <div class="controls">
+    <input id="room" value="testroom" placeholder="Room ID" style="width: 200px;" />
+    <input id="botCount" type="number" value="5" min="1" max="30" style="width: 80px;" placeholder="Count" />
+    <input id="delayMs" type="number" value="500" min="0" max="5000" style="width: 100px;" placeholder="Delay (ms)" />
+    <button id="addBots">➕ Add Bots</button>
+    <button id="removeAll" class="danger">🗑️ Remove All</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-item">
+      <span class="stat-label">Active Bots:</span>
+      <span class="stat-value" id="activeBots">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">ICE Connected:</span>
+      <span class="stat-value" id="iceConnected">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Streaming (no ICE):</span>
+      <span class="stat-value warning" id="streamingNoIce">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Failed:</span>
+      <span class="stat-value error" id="failedBots">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Buffered ICE Total:</span>
+      <span class="stat-value" id="bufferedIce">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">ICE Applied:</span>
+      <span class="stat-value" id="appliedIce">0</span>
+    </div>
+  </div>
+
+  <div class="bot-grid" id="botGrid"></div>
+
+  <div class="log" id="log"></div>
+
+<script>
+class FixedBot {
+  constructor(id, roomId) {
+    this.id = id;
+    this.peerId = `bot-${id}-${Date.now()}`;
+    this.roomId = roomId;
+    this.displayName = `Bot-${id}`;
+    this.ws = null;
+    this.pc = null;
+    this.stream = null;
+    this.canvas = null;
+    this.status = 'new';
+    this.requestId = 1;
+    this.cardElement = null;
+    
+    // Buffer for ICE candidates
+    this.pendingICE = [];
+    
+    // Diagnostic data
+    this.iceState = 'new';
+    this.connectionState = 'new';
+    this.signalingState = 'stable';
+    this.iceCandidatesSent = 0;
+    this.iceBuffered = 0;
+    this.iceApplied = 0;
+    this.tracksAdded = 0;
+    this.offerSent = false;
+    this.answerReceived = false;
+    this.remoteDescSet = false;
+  }
+
+  log(msg) {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEl = document.getElementById("log");
+    logEl.textContent += `[${timestamp}] [${this.displayName}] ${msg}\n`;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  updateStatus(status) {
+    this.status = status;
+    if (this.cardElement) {
+      const statusEl = this.cardElement.querySelector('.bot-status');
+      statusEl.textContent = status;
+      
+      this.cardElement.className = 'bot-card';
+      if (this.iceState === 'connected') {
+        this.cardElement.classList.add('connected');
+      } else if (this.remoteDescSet && this.iceState !== 'connected') {
+        this.cardElement.classList.add('streaming');
+      } else if (status.includes('connecting') || status.includes('checking')) {
+        this.cardElement.classList.add('connecting');
+      } else if (status.includes('error') || status.includes('failed')) {
+        this.cardElement.classList.add('error');
+      }
+      
+      this.updateDetails();
+    }
+    updateGlobalStats();
+  }
+
+  updateDetails() {
+    if (!this.cardElement) return;
+    
+    const detailsEl = this.cardElement.querySelector('.bot-details');
+    detailsEl.innerHTML = `
+      <div><span>ICE:</span><span>${this.iceState}</span></div>
+      <div><span>Connection:</span><span>${this.connectionState}</span></div>
+      <div><span>ICE sent:</span><span>${this.iceCandidatesSent}</span></div>
+      <div><span>ICE buffered:</span><span>${this.iceBuffered}</span></div>
+      <div><span>ICE applied:</span><span>${this.iceApplied}</span></div>
+      <div><span>RemoteDesc:</span><span>${this.remoteDescSet ? '✓' : '✗'}</span></div>
+    `;
+  }
+
+  createCanvas() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext('2d');
+    
+    const hue = (this.id * 137.5) % 360;
+    let frame = 0;
+    
+    const animate = () => {
+      frame++;
+      
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+      gradient.addColorStop(0, `hsl(${(hue + frame * 0.5) % 360}, 70%, 40%)`);
+      gradient.addColorStop(1, `hsl(${(hue + frame * 0.5 + 60) % 360}, 70%, 30%)`);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      const x = (Math.sin(frame * 0.05) + 1) * canvas.width / 2;
+      const y = (Math.cos(frame * 0.07) + 1) * canvas.height / 2;
+      ctx.fillStyle = `hsl(${(hue + 180) % 360}, 80%, 60%)`;
+      ctx.beginPath();
+      ctx.arc(x, y, 50, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = "white";
+      ctx.font = "bold 28px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(this.displayName, canvas.width / 2, canvas.height / 2);
+      
+      ctx.font = "14px monospace";
+      ctx.fillText(`F: ${frame}`, canvas.width / 2, canvas.height - 20);
+    };
+    
+    this.animationInterval = setInterval(animate, 1000 / 30);
+    animate();
+    
+    this.canvas = canvas;
+    return canvas;
+  }
+
+  async start() {
+    try {
+      this.updateStatus('🟡 creating stream...');
+      
+      const canvas = this.createCanvas();
+      this.stream = canvas.captureStream(30);
+      
+      this.pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      });
+
+      this.pc.onsignalingstatechange = () => {
+        this.signalingState = this.pc.signalingState;
+        this.updateDetails();
+      };
+
+      this.pc.oniceconnectionstatechange = () => {
+        this.iceState = this.pc.iceConnectionState;
+        this.log(`ICE state: ${this.iceState}`);
+        
+        if (this.iceState === 'connected') {
+          this.updateStatus('🟢 ICE connected');
+        } else if (this.iceState === 'checking') {
+          this.updateStatus('🟡 ICE checking...');
+        } else if (this.iceState === 'failed') {
+          this.updateStatus('🔴 ICE failed');
+        } else if (this.iceState === 'disconnected') {
+          this.updateStatus('🔴 ICE disconnected');
+        }
+        
+        this.updateDetails();
+      };
+
+      this.pc.onconnectionstatechange = () => {
+        this.connectionState = this.pc.connectionState;
+        this.updateDetails();
+      };
+
+      this.pc.onicecandidate = e => {
+        if (e.candidate) {
+          this.iceCandidatesSent++;
+          
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+              jsonrpc: "2.0",
+              method: "ice.candidate",
+              params: {
+                target: "publisher",
+                candidate: e.candidate.candidate,
+                sdpMid: e.candidate.sdpMid,
+                sdpMLineIndex: e.candidate.sdpMLineIndex
+              },
+              id: this.requestId++
+            }));
+          }
+          
+          this.updateDetails();
+          updateGlobalStats();
+        }
+      };
+
+      this.stream.getTracks().forEach(track => {
+        this.pc.addTrack(track, this.stream);
+        this.tracksAdded++;
+      });
+      
+      updateGlobalStats();
+
+      this.updateStatus('🟡 connecting to server...');
+
+      this.ws = new WebSocket(`ws://localhost:8080/ws?peerId=${this.peerId}`);
+
+      this.ws.onopen = () => {
+        this.log('✓ WebSocket connected');
+        this.updateStatus('🟡 joining room...');
+        
+        this.ws.send(JSON.stringify({
+          jsonrpc: "2.0",
+          method: "room.join",
+          params: { 
+            roomId: this.roomId, 
+            peerId: this.peerId, 
+            displayName: this.displayName,
+            auth: ""
+          },
+          id: 1
+        }));
+      };
+
+      this.ws.onmessage = async (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          await this.handleMessage(msg);
+        } catch (e) {
+          this.log(`Error: ${e.message}`);
+        }
+      };
+
+      this.ws.onerror = () => {
+        this.log('❌ WebSocket error');
+        this.updateStatus('🔴 connection error');
+      };
+
+      this.ws.onclose = () => {
+        if (this.status !== '🔴 stopped') {
+          this.updateStatus('🔴 disconnected');
+        }
+      };
+
+    } catch (e) {
+      this.log(`❌ Error: ${e.message}`);
+      this.updateStatus('🔴 error');
+    }
+  }
+
+  async handleMessage(msg) {
+    if (msg.id === 1 && msg.result && msg.result.success !== undefined) {
+      this.log(`✓ Joined! Peers: ${msg.result.peers?.length || 0}`);
+      this.updateStatus('🟡 sending offer...');
+      await this.sendOffer();
+      return;
+    }
+
+    if (msg.id && msg.result && msg.result.sdp && msg.result.type === "answer") {
+      this.answerReceived = true;
+      this.log('✓ Received answer');
+      
+      try {
+        if (this.pc && this.pc.signalingState === "have-local-offer") {
+          await this.pc.setRemoteDescription(new RTCSessionDescription({
+            type: msg.result.type,
+            sdp: msg.result.sdp
+          }));
+          this.remoteDescSet = true;
+          this.log('✓ Remote description set');
+          
+          // Apply buffered ICE candidates
+          if (this.pendingICE.length > 0) {
+            this.log(`🧊 Applying ${this.pendingICE.length} buffered ICE candidates`);
+            for (const ice of this.pendingICE) {
+              try {
+                await this.pc.addIceCandidate(new RTCIceCandidate(ice));
+                this.iceApplied++;
+                this.log(`✓ Applied buffered ICE`);
+              } catch (e) {
+                this.log(`⚠️ ICE error: ${e.message}`);
+              }
+            }
+            this.pendingICE = [];
+            this.iceBuffered = 0;
+            this.updateDetails();
+            updateGlobalStats();
+          }
+          
+          if (this.iceState === 'connected') {
+            this.updateStatus('🟢 ICE connected');
+          } else {
+            this.updateStatus('🔵 streaming (waiting for ICE)');
+          }
+        }
+      } catch (e) {
+        this.log(`❌ Error: ${e.message}`);
+        this.updateStatus('🔴 error');
+      }
+      
+      this.updateDetails();
+      return;
+    }
+
+    if (msg.method === "ice.candidate") {
+      const c = msg.params;
+      if (c.target === "publisher" && this.pc) {
+        const ice = {
+          candidate: c.candidate,
+          sdpMid: c.sdpMid,
+          sdpMLineIndex: c.sdpMLineIndex
+        };
+        
+        // ⭐ FIX: Buffer or apply ICE candidate
+        if (this.pc.remoteDescription) {
+          try {
+            await this.pc.addIceCandidate(new RTCIceCandidate(ice));
+            this.iceApplied++;
+            this.log('✓ Added ICE candidate');
+            this.updateDetails();
+            updateGlobalStats();
+          } catch (e) {
+            this.log(`⚠️ ICE error: ${e.message}`);
+          }
+        } else {
+          this.pendingICE.push(ice);
+          this.iceBuffered++;
+          this.log(`🕒 Buffered ICE (total: ${this.pendingICE.length})`);
+          this.updateDetails();
+          updateGlobalStats();
+        }
+      }
+      return;
+    }
+
+    if (msg.error) {
+      this.log(`❌ Error: ${msg.error.message}`);
+      this.updateStatus('🔴 error');
+      return;
+    }
+  }
+
+  async sendOffer() {
+    try {
+      const offer = await this.pc.createOffer();
+      await this.pc.setLocalDescription(offer);
+
+      this.ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "publisher.offer",
+        params: { 
+          sdp: offer.sdp,
+          type: offer.type
+        },
+        id: this.requestId++
+      }));
+      
+      this.offerSent = true;
+      this.log('✓ Offer sent');
+      this.updateDetails();
+    } catch (e) {
+      this.log(`❌ Error: ${e.message}`);
+      this.updateStatus('🔴 error');
+    }
+  }
+
+  async stop() {
+    if (this.animationInterval) {
+      clearInterval(this.animationInterval);
+    }
+    
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+    }
+
+    if (this.pc) {
+      this.pc.close();
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({
+          jsonrpc: "2.0",
+          method: "room.leave",
+          params: { roomId: this.roomId },
+          id: this.requestId++
+        }));
+      } catch (e) {}
+      this.ws.close();
+    }
+
+    this.updateStatus('🔴 stopped');
+  }
+
+  createCard() {
+    const card = document.createElement('div');
+    card.className = 'bot-card';
+    card.innerHTML = `
+      <button class="bot-remove" title="Remove bot">×</button>
+      <div class="bot-name">${this.displayName}</div>
+      <div class="bot-status">${this.status}</div>
+      <div class="bot-details"></div>
+    `;
+    
+    if (this.canvas) {
+      card.insertBefore(this.canvas, card.firstChild);
+    }
+    
+    card.querySelector('.bot-remove').onclick = () => {
+      removeBot(this.id);
+    };
+    
+    this.cardElement = card;
+    this.updateDetails();
+    return card;
+  }
+}
+
+const bots = new Map();
+let botCounter = 1;
+
+function updateGlobalStats() {
+  document.getElementById('activeBots').textContent = bots.size;
+  
+  let iceConnected = 0;
+  let streamingNoIce = 0;
+  let failed = 0;
+  let bufferedIce = 0;
+  let appliedIce = 0;
+  
+  bots.forEach(bot => {
+    if (bot.iceState === 'connected') {
+      iceConnected++;
+    } else if (bot.remoteDescSet && bot.iceState !== 'connected') {
+      streamingNoIce++;
+    }
+    
+    if (bot.iceState === 'failed' || bot.status.includes('error')) {
+      failed++;
+    }
+    
+    bufferedIce += bot.iceBuffered;
+    appliedIce += bot.iceApplied;
+  });
+  
+  document.getElementById('iceConnected').textContent = iceConnected;
+  document.getElementById('streamingNoIce').textContent = streamingNoIce;
+  document.getElementById('failedBots').textContent = failed;
+  document.getElementById('bufferedIce').textContent = bufferedIce;
+  document.getElementById('appliedIce').textContent = appliedIce;
+}
+
+function addBot(roomId) {
+  const bot = new FixedBot(botCounter++, roomId);
+  bots.set(bot.id, bot);
+  
+  const card = bot.createCard();
+  document.getElementById('botGrid').appendChild(card);
+  
+  bot.start();
+  updateGlobalStats();
+  
+  return bot;
+}
+
+function removeBot(botId) {
+  const bot = bots.get(botId);
+  if (bot) {
+    bot.stop();
+    if (bot.cardElement) {
+      bot.cardElement.remove();
+    }
+    bots.delete(botId);
+    updateGlobalStats();
+  }
+}
+
+function removeAllBots() {
+  bots.forEach(bot => {
+    bot.stop();
+    if (bot.cardElement) {
+      bot.cardElement.remove();
+    }
+  });
+  bots.clear();
+  updateGlobalStats();
+}
+
+document.getElementById('addBots').onclick = () => {
+  const room = document.getElementById('room').value;
+  const count = parseInt(document.getElementById('botCount').value) || 1;
+  const delay = parseInt(document.getElementById('delayMs').value) || 500;
+  
+  if (!room) {
+    alert('Please enter a room ID');
+    return;
+  }
+  
+  const logEl = document.getElementById("log");
+  logEl.textContent += `\n=== Adding ${count} bots (${delay}ms delay) ===\n`;
+  
+  for (let i = 0; i < count; i++) {
+    setTimeout(() => addBot(room), i * delay);
+  }
+};
+
+document.getElementById('removeAll').onclick = () => {
+  if (bots.size > 0 && confirm(`Remove all ${bots.size} bots?`)) {
+    removeAllBots();
+  }
+};
+
+const logEl = document.getElementById("log");
+logEl.textContent = "🤖 Bot Generator\n";
+
+window.addEventListener('beforeunload', () => {
+  removeAllBots();
+});
+
+setInterval(updateGlobalStats, 1000);
+</script>
+</body>
+</html>
