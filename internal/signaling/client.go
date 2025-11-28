@@ -49,17 +49,17 @@ func (c *Client) HandleMessage(msg []byte) {
 
 	// Маршрутизируем запрос к нужному обработчику
 	switch req.Method {
-	case "join":
+	case protocol.MethodRoomJoin:
 		c.handleJoin(req)
-	case "leave":
+	case protocol.MethodRoomLeave:
 		c.handleLeave(req)
-	case "publisher.offer":
+	case protocol.MethodPublisherOffer:
 		c.handlePublisherOffer(req)
-	case "subscriber.answer":
+	case protocol.MethodSubscriberAnswer:
 		c.handleSubscriberAnswer(req)
-	case "ice.candidate":
+	case protocol.MethodIceCandidate:
 		c.handleICECandidate(req)
-	case "camera.state":
+	case protocol.MethodCameraState:
 		c.handleCameraState(req)
 	default:
 		c.sendError(req.ID, protocol.ErrCodeMethodNotFound, "method not found: "+req.Method)
@@ -238,7 +238,7 @@ func (c *Client) notifyOthersAboutJoin(peerID, displayName string) {
 		// Отправляем уведомление через интерфейс SignalingClient
 		if client, ok := otherPeer.GetClient().(*Client); ok {
 			log.Printf("🔔 Notifying peer %s about new peer %s", otherPeer.ID, peerID)
-			client.SendNotification("peerJoined", protocol.PeerJoinedNotify{
+			client.SendNotification(protocol.NotifyPeerJoined, protocol.PeerJoinedNotify{
 				PeerID:      peerID,
 				DisplayName: displayName,
 			})
@@ -258,7 +258,7 @@ func (c *Client) notifyOthersAboutLeave(peerID string) {
 		}
 
 		if client, ok := otherPeer.GetClient().(*Client); ok {
-			client.SendNotification("peerLeft", protocol.PeerLeftNotify{
+			client.SendNotification(protocol.NotifyPeerLeft, protocol.PeerLeftNotify{
 				PeerID: peerID,
 			})
 		}

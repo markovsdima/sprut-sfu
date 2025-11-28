@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"simple-sfu/internal/config"
+	"simple-sfu/pkg/protocol"
 	"sync"
 	"time"
 
@@ -120,8 +121,7 @@ func (p *Peer) HandlePublisherOffer(sdp string) (string, error) {
 		if candidate == nil {
 			return
 		}
-
-		p.client.SendNotification("iceCandidate", map[string]interface{}{
+		p.client.SendNotification(protocol.NotifyIceCandidate, map[string]interface{}{
 			"target":        "publisher",
 			"candidate":     candidate.ToJSON().Candidate,
 			"sdpMid":        *candidate.ToJSON().SDPMid,
@@ -647,7 +647,7 @@ func (p *Peer) notifyOthersAboutCameraState(enabled bool) {
 			continue
 		}
 
-		otherPeer.GetClient().SendNotification("cameraStateChanged", map[string]any{
+		otherPeer.GetClient().SendNotification(protocol.NotifyCameraStateChanged, map[string]interface{}{
 			"peerId":  p.ID,
 			"enabled": enabled,
 		})
