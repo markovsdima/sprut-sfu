@@ -490,7 +490,7 @@ async function handleMessage(msg) {
     return;
   }
 
-  if (msg.method === "subscriberOffer") {
+  if (msg.method === "subscriber.offer") {
     log("📨 Received subscriber offer");
     
     const pc = subscriberPC || createSubscriberPC();
@@ -554,7 +554,7 @@ async function handleMessage(msg) {
     return;
   }
 
-  if (msg.method === "peerJoined") {
+  if (msg.method === "peer.joined") {
     const { peerId: newPeer, displayName } = msg.params;
     log(`👤 Peer joined: ${displayName || newPeer}`);
     if (newPeer !== peerId) {
@@ -590,7 +590,7 @@ document.getElementById("join").onclick = async () => {
     
     ws.send(JSON.stringify({
       jsonrpc: "2.0",
-      method: "join",
+      method: "room.join",
       params: { 
         roomId: room, 
         peerId: peerId, 
